@@ -68,6 +68,32 @@ process.stdin.on('end', () => {
         /\bnormal mode\b/i.test(prompt)) {
       try { fs.unlinkSync(flagPath); } catch (e) {}
     }
+
+    // Per-turn reinforcement: emit a structured reminder when caveman is active.
+    // The SessionStart hook injects the full ruleset once, but models lose it
+    // when other plugins inject competing style instructions every turn.
+    // This keeps caveman visible in the model's attention on every user message.
+    //
+    // Skip independent modes (commit, review, compress) — they have their own
+    // skill behavior and the base caveman rules would conflict.
+    const INDEPENDENT_MODES = new Set(['commit', 'review', 'compress']);
+    try {
+      if (fs.existsSync(flagPath)) {
+        const activeMode = fs.readFileSync(flagPath, 'utf8').trim() || 'full';
+        if (!INDEPENDENT_MODES.has(activeMode)) {
+          process.stdout.write(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: "UserPromptSubmit",
+              additionalContext: "CAVEMAN MODE ACTIVE (" + activeMode + "). " +
+                "Drop articles/filler/pleasantries/hedging. Fragments OK. " +
+                "Code/commits/security: write normal."
+            }
+          }));
+        }
+      }
+    } catch (e) {
+      // Silent fail — reinforcement is best-effort
+    }
   } catch (e) {
     // Silent fail
   }
