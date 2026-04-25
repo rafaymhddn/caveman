@@ -1,5 +1,5 @@
 ---
-name: compress
+name: caveman-compress
 description: >
   Compress natural language memory files (CLAUDE.md, todos, preferences) into caveman format
   to save input tokens. Preserves all technical substance, code, URLs, and structure.
@@ -19,21 +19,28 @@ Compress natural language files (CLAUDE.md, todos, preferences) into caveman-spe
 
 ## Process
 
-1. This SKILL.md lives alongside `scripts/` in the same directory. Find that directory.
+1. The compression scripts live in the same directory as this SKILL.md. Locate the `scripts/` subdirectory.
 
 2. Run:
 
+```bash
 cd <directory_containing_this_SKILL.md> && python3 -m scripts <absolute_filepath>
+```
 
-3. The CLI will:
+3. The CLI auto-detects the environment and picks the right LLM backend:
+   - **Claude Code**: Uses `ANTHROPIC_API_KEY` (Anthropic SDK) or `claude` CLI
+   - **pi / OpenAI**: Uses `OPENAI_API_KEY` + `OPENAI_BASE_URL` (OpenAI-compatible API)
+   - **Override**: Set `CAVEMAN_API_KEY`, `CAVEMAN_API_URL`, `CAVEMAN_MODEL` to force a specific backend
+
+4. The CLI will:
 - detect file type (no tokens)
-- call Claude to compress
+- call LLM to compress
 - validate output (no tokens)
-- if errors: cherry-pick fix with Claude (targeted fixes only, no recompression)
+- if errors: cherry-pick fix with LLM (targeted fixes only, no recompression)
 - retry up to 2 times
 - if still failing after 2 retries: report error to user, leave original file untouched
 
-4. Return result to user
+5. Return result to user
 
 ## Compression Rules
 

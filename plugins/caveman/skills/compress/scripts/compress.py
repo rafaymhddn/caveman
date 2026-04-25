@@ -72,22 +72,101 @@ MAX_RETRIES = 2
 # ---------- Claude Calls ----------
 
 
-def call_claude(prompt: str) -> str:
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key:
-        try:
-            import anthropic
+def _detect_env() -> str:
+    """Detect which agent environment we're running in.
 
-            client = anthropic.Anthropic(api_key=api_key)
-            msg = client.messages.create(
-                model=os.environ.get("CAVEMAN_MODEL", "claude-sonnet-4-5"),
-                max_tokens=8192,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return strip_llm_wrapper(msg.content[0].text.strip())
-        except ImportError:
-            pass  # anthropic not installed, fall back to CLI
-    # Fallback: use claude CLI (handles desktop auth)
+    Returns one of: 'pi', 'claude-code', 'unknown'
+    """
+    # pi sets PI_SESSION or has pi-specific env vars
+    if os.environ.get("PI_SESSION") or os.environ.get("PI_API_KEY"):
+        return "pi"
+    # Claude Code sets CLAUDE_CODE or has claude-specific paths
+    if os.environ.get("CLAUDE_CODE") or os.environ.get("CLAUDE_CONFIG_DIR"):
+        return "claude-code"
+    # Check if anthropic key is set (common in Claude workflows)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "claude-code"
+    return "unknown"
+
+
+def _call_openai_compatible(prompt: str) -> str:
+    """Call an OpenAI-compatible API (used by pi and other agents).
+
+    Respects CAVEMAN_API_URL, CAVEMAN_API_KEY, CAVEMAN_MODEL env vars.
+    Falls back to OPENAI_API_KEY / OPENAI_BASE_URL if available.
+    """
+    api_key = os.environ.get("CAVEMAN_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+    base_url = (
+        os.environ.get("CAVEMAN_API_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or "https://api.openai.com/v1"
+    )
+    model = os.environ.get("CAVEMAN_MODEL", "gpt-4o")
+
+    try:
+        import urllib.request
+        import json as _json
+
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        data = _json.dumps({
+            "model": model,
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode()
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = _json.loads(resp.read().decode())
+        return strip_llm_wrapper(result["choices"][0]["message"]["content"].strip())
+    except Exception as e:
+        raise RuntimeError(f"OpenAI-compatible API call failed: {e}")
+
+
+def call_claude(prompt: str) -> str:
+    """Compress via LLM. Tries backends in order based on environment.
+
+    Priority: CAVEMAN_API_* override → Anthropic SDK → OpenAI-compatible API → claude CLI.
+    On 'unknown' env with both keys set, Anthropic wins (backward compat).
+    """
+    # --- Path 0: Explicit override bypasses env detection ---
+    if os.environ.get("CAVEMAN_API_KEY") or os.environ.get("CAVEMAN_API_URL"):
+        return _call_openai_compatible(prompt)
+
+    env = _detect_env()
+
+    # --- Path 1: Anthropic SDK (Claude Code native) ---
+    if env in ("claude-code", "unknown"):
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            try:
+                import anthropic
+
+                client = anthropic.Anthropic(api_key=api_key)
+                msg = client.messages.create(
+                    model=os.environ.get("CAVEMAN_MODEL", "claude-sonnet-4-5"),
+                    max_tokens=8192,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return strip_llm_wrapper(msg.content[0].text.strip())
+            except ImportError:
+                pass
+
+    # --- Path 2: OpenAI-compatible API (pi, OpenAI, local models) ---
+    if env in ("pi", "unknown"):
+        api_key = (
+            os.environ.get("CAVEMAN_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
+        if api_key:
+            return _call_openai_compatible(prompt)
+
+    # --- Path 3: Claude CLI fallback ---
     try:
         result = subprocess.run(
             ["claude", "--print"],
@@ -97,8 +176,11 @@ def call_claude(prompt: str) -> str:
             check=True,
         )
         return strip_llm_wrapper(result.stdout.strip())
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Claude call failed:\n{e.stderr}")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        stderr = getattr(e, 'stderr', str(e)) or ""
+        raise RuntimeError(
+            f"No LLM backend available. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.\nLast error: {stderr}"
+        )
 
 
 def build_compress_prompt(original: str) -> str:
@@ -169,7 +251,7 @@ def compress_file(filepath: Path) -> bool:
         raise ValueError(
             f"Refusing to compress {filepath}: filename looks sensitive "
             "(credentials, keys, secrets, or known private paths). "
-            "Compression sends file contents to the Anthropic API. "
+            "Compression sends file contents to an external LLM API. "
             "Rename the file if this is a false positive."
         )
 
@@ -190,7 +272,8 @@ def compress_file(filepath: Path) -> bool:
         return False
 
     # Step 1: Compress
-    print("Compressing with Claude...")
+    env = _detect_env()
+    print(f"Compressing with LLM (env={env})...")
     compressed = call_claude(build_compress_prompt(original_text))
 
     # Save original as backup, write compressed to original path
@@ -218,7 +301,7 @@ def compress_file(filepath: Path) -> bool:
             print("❌ Failed after retries — original restored")
             return False
 
-        print("Fixing with Claude...")
+        print("Fixing with LLM...")
         compressed = call_claude(
             build_fix_prompt(original_text, compressed, result.errors)
         )
