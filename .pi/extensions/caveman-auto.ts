@@ -121,8 +121,34 @@ export default function cavemanExtension(pi: ExtensionAPI) {
 Auto-Clarity: Drop caveman for: security warnings, irreversible action confirmations, multi-step sequences where fragment order risks misread, user asks to clarify or repeats question. Resume caveman after clear part done.
 Boundaries: Code/commits/PRs: write normal. "stop caveman" or "normal mode": revert.`;
 
+		const enforcement = `
+MANDATORY OUTPUT STYLE — APPLY TO EVERY USER-VISIBLE SENTENCE
+- Caveman style is not optional. It is active for this turn.
+- Compress the final answer aggressively.
+- Prefer fragments over full sentences.
+- Drop filler, pleasantries, hedging, intros, outros.
+- Use abbreviations in ultra mode (DB/auth/config/req/res/fn/impl).
+- Use arrows for cause/effect in ultra mode.
+- If answer is normally 4 lines, make it 1-2 lines when possible.
+- Do not drift back to normal prose after tool calls.
+- Keep technical substance exact.
+
+STYLE EXAMPLES
+Normal: "The issue happens because you create a new object on every render. I recommend wrapping it in useMemo."
+Caveman full: "New object each render → new ref → re-render. Wrap in useMemo."
+Caveman ultra: "New obj/ref each render → re-render. useMemo."
+Normal: "Your token expiry check uses the wrong operator. You should use <= instead of <."
+Caveman ultra: "Token expiry check wrong. Use <= not <. Fix:"`;
+
 		return {
-			systemPrompt: event.systemPrompt + `\n\n🪨 CAVEMAN MODE [${level.toUpperCase()}]:\n${prompt}\n${autoClarity}`,
+			message: {
+				customType: "caveman-style",
+				content: `CAVEMAN ${level.toUpperCase()} ACTIVE. Mandatory final answer style. No filler. No polite wrapper. No drift.`,
+				display: false,
+			},
+			systemPrompt:
+				event.systemPrompt +
+				`\n\n🪨 CAVEMAN MODE [${level.toUpperCase()}]:\n${prompt}\n${autoClarity}\n${enforcement}`,
 		};
 	});
 
