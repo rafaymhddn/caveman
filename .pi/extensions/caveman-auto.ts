@@ -14,8 +14,18 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-const LEVELS = ["lite", "full", "ultra", "wenyan-lite", "wenyan", "wenyan-ultra"] as const;
+const LEVELS = ["lite", "full", "ultra", "wenyan-lite", "wenyan-full", "wenyan", "wenyan-ultra"] as const;
 type CavemanLevel = (typeof LEVELS)[number];
+
+// wenyan-full is an alias for wenyan
+const LEVEL_ALIASES: Record<string, CavemanLevel> = {
+	"wenyan-full": "wenyan",
+};
+
+function resolveLevel(raw: string): CavemanLevel | undefined {
+	const resolved = LEVEL_ALIASES[raw] ?? raw;
+	return LEVELS.includes(resolved as CavemanLevel) ? resolved as CavemanLevel : undefined;
+}
 
 const LEVEL_PROMPTS: Record<CavemanLevel, string> = {
 	lite: `Respond terse. No filler/hedging. Keep articles + full sentences. Professional but tight. Still active every response. Off only: "stop caveman" / "normal mode".`,
@@ -41,17 +51,29 @@ export default function cavemanExtension(pi: ExtensionAPI) {
 	let active = false;
 	let level: CavemanLevel = "full";
 
-	// Read settings
+	// Read settings from ~/.pi/settings.json + .pi/settings.json (project overrides home)
 	function getSettings() {
 		try {
 			const fs = require("node:fs");
 			const path = require("node:path");
 			const home = process.env.HOME || process.env.USERPROFILE || "";
-			const settingsPath = path.join(home, ".pi", "settings.json");
-			if (fs.existsSync(settingsPath)) {
-				const raw = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
-				return raw.caveman ?? {};
+			let merged: any = {};
+
+			// Global settings
+			const globalPath = path.join(home, ".pi", "settings.json");
+			if (fs.existsSync(globalPath)) {
+				const raw = JSON.parse(fs.readFileSync(globalPath, "utf8"));
+				if (raw.caveman) merged = { ...merged, ...raw.caveman };
 			}
+
+			// Project settings (cwd or ancestor with .pi/)
+			const projectPath = path.join(process.cwd(), ".pi", "settings.json");
+			if (fs.existsSync(projectPath)) {
+				const raw = JSON.parse(fs.readFileSync(projectPath, "utf8"));
+				if (raw.caveman) merged = { ...merged, ...raw.caveman };
+			}
+
+			return merged;
 		} catch {
 			// ignore
 		}
@@ -62,8 +84,9 @@ export default function cavemanExtension(pi: ExtensionAPI) {
 	if (settings.autoActivate !== false) {
 		active = true;
 	}
-	if (settings.defaultLevel && LEVELS.includes(settings.defaultLevel)) {
-		level = settings.defaultLevel;
+	if (settings.defaultLevel) {
+		const resolved = resolveLevel(settings.defaultLevel);
+		if (resolved) level = resolved;
 	}
 
 	// Helper: update footer status indicator
@@ -141,9 +164,10 @@ Boundaries: Code/commits/PRs: write normal. "stop caveman" or "normal mode": rev
 				return;
 			}
 
-			// Switch level
-			if (LEVELS.includes(arg as CavemanLevel)) {
-				level = arg as CavemanLevel;
+			// Switch level (supports aliases like wenyan-full)
+			const resolved = resolveLevel(arg);
+			if (resolved) {
+				level = resolved;
 				active = true;
 				ctx.ui.notify(`🪨 Caveman mode: ${level}`, "info");
 				updateStatus(ctx);

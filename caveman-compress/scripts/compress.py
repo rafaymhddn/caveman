@@ -131,9 +131,13 @@ def _call_openai_compatible(prompt: str) -> str:
 def call_claude(prompt: str) -> str:
     """Compress via LLM. Tries backends in order based on environment.
 
-    Priority: Anthropic SDK → OpenAI-compatible API → claude CLI.
+    Priority: CAVEMAN_API_* override → Anthropic SDK → OpenAI-compatible API → claude CLI.
     On 'unknown' env with both keys set, Anthropic wins (backward compat).
     """
+    # --- Path 0: Explicit override bypasses env detection ---
+    if os.environ.get("CAVEMAN_API_KEY") or os.environ.get("CAVEMAN_API_URL"):
+        return _call_openai_compatible(prompt)
+
     env = _detect_env()
 
     # --- Path 1: Anthropic SDK (Claude Code native) ---
